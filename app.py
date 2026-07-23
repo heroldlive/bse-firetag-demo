@@ -158,7 +158,11 @@ button{font-family:inherit}
 .lnk{background:none;border:none;color:var(--acc);font-size:13px;cursor:pointer;padding:0}
 .back{background:none;border:none;color:var(--tx2);font-size:13px;cursor:pointer;padding:0;margin-bottom:12px}
 input{width:100%;padding:10px 12px;border:.5px solid var(--bd2);border-radius:8px;font-size:15px;margin:6px 0 14px;background:var(--card);color:var(--tx)}
-.scan{border:2px dashed var(--bd2);border-radius:12px;height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--tx3);margin-bottom:14px}
+.scan{border:2px dashed var(--bd2);border-radius:12px;height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--tx3);margin-bottom:14px;position:relative;overflow:hidden;cursor:pointer;background:#000}
+.scan video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.scan .hint{position:relative;z-index:1;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+.scan.idle{background:var(--card);color:var(--tx3)}
+.scan.idle .hint{color:inherit;text-shadow:none}
 .chip{display:inline-flex;align-items:center;font-size:13px;border:.5px solid var(--bd2);border-radius:20px;padding:7px 13px;margin:0 6px 8px 0;cursor:pointer}
 .chip input{width:auto;margin:0 6px 0 0}
 .row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:.5px solid var(--bd);font-size:13px}
@@ -170,9 +174,37 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;p
 </style></head><body><div class="wrap">
 <div class="hdr"><b>🔥 BSE FireTag</b><span class="inv" id="inv"></span></div>
 <div class="sc" id="sc"></div></div>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
 const A=(p,o)=>fetch(p,o).then(r=>r.json().then(j=>({ok:r.ok,status:r.status,j})));
 let V={s:'scan',aid:null,pend:null,asset:null,hist:[]};
+let CAM={stream:null,raf:null};
+function stopCam(){if(CAM.raf)cancelAnimationFrame(CAM.raf);if(CAM.stream)CAM.stream.getTracks().forEach(t=>t.stop());CAM.stream=null;CAM.raf=null;}
+async function startCam(){
+  const box=document.getElementById('viewfinder');if(!box)return;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    CAM.stream=stream;
+    box.classList.remove('idle');
+    box.innerHTML='<video id="camv" autoplay playsinline muted></video><span class="hint" style="font-size:12px">Point at tag QR code</span>';
+    const video=document.getElementById('camv');video.srcObject=stream;await video.play();
+    const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    const tick=()=>{
+      if(video.readyState===video.HAVE_ENOUGH_DATA){
+        canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+        const code=window.jsQR&&jsQR(img.data,img.width,img.height);
+        if(code&&code.data){stopCam();scan(code.data.trim());return;}
+      }
+      CAM.raf=requestAnimationFrame(tick);
+    };
+    CAM.raf=requestAnimationFrame(tick);
+  }catch(err){
+    box.classList.add('idle');
+    box.innerHTML='<div style="font-size:32px">▦</div><span class="hint" style="font-size:12px">Camera unavailable — '+(err.message||'permission denied')+'</span>';
+  }
+}
 const sc=()=>document.getElementById('sc');
 async function inv(){const {j}=await A('/api/tags');document.getElementById('inv').textContent='🎫 '+j.blank+' blank';}
 function due(a,y){return a.last_service?('+'+y+'y from '+a.last_service):'after first service';}
@@ -181,7 +213,7 @@ async function render(){
   await inv(); const e=sc();
   if(V.s==='scan'){
     e.innerHTML=`<p class="muted"><b>Scan control tag</b> to identify the extinguisher.</p>
-    <div class="scan"><div style="font-size:40px">▦</div><span style="font-size:12px">Viewfinder</span></div>
+    <div class="scan idle" id="viewfinder" onclick="startCam()"><div style="font-size:40px">▦</div><span class="hint" style="font-size:12px">Tap to open camera</span></div>
     <p class="tiny" style="margin-bottom:6px">Demo — tap an affixed tag:</p><div id="tg"></div>
     <button class="lnk" onclick="go('find')">🔍 Can't scan? Find by location</button>
     <div style="margin-top:16px"><button class="lnk" onclick="showReg()">View §10.3.3.1 register →</button></div>
@@ -242,8 +274,8 @@ async function render(){
     <a class="btn" style="text-align:center;display:block;text-decoration:none;margin-top:12px" href="/api/register?format=csv">⬇ Export CSV</a>`;
   }
 }
-window.go=s=>{V.s=s;render()};
-window.scan=async s=>{const {ok,j}=await A('/api/asset/by-tag/'+s);if(!ok){alert('Retired or unknown tag — use Find by location');return;}V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();};
+window.go=s=>{stopCam();V.s=s;render()};
+window.scan=async s=>{stopCam();const {ok,j}=await A('/api/asset/by-tag/'+s);if(!ok){alert('Retired or unknown tag — use Find by location');go('scan');return;}V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();};
 window.openAsset=async id=>{const {j}=await A('/api/asset/'+id);V.asset=j;V.aid=id;const h=await A('/api/asset/'+id+'/history');V.hist=h.j;V.s='asset';render();};
 window.rfind=async()=>{const q=document.getElementById('q').value;const {j}=await A('/api/asset/search?q='+encodeURIComponent(q));
   document.getElementById('res').innerHTML=j.length?j.map(a=>`<button class="btn" onclick="openAsset(${a.id})">Asset ${a.id} · ${a.location_in_site}<br><span class="tiny">${a.type_label} · ${a.building_name}</span></button>`).join(''):'<p class="tiny">No match.</p>';};
