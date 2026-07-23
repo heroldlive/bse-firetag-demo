@@ -60,6 +60,28 @@ def by_tag(s):
     if not r: c.close(); return jsonify(error="retired or unknown tag"),404
     return jsonify(_due(dict(r),c))
 
+@app.get("/api/types")
+def types():
+    c=conn(); rows=[dict(x) for x in c.execute("SELECT * FROM extinguisher_types").fetchall()]; c.close()
+    return jsonify(rows)
+
+@app.post("/api/asset")
+def create_asset():
+    d=request.json; c=conn()
+    try:
+        tag=d.get("tag_serial")
+        if tag:
+            existing=c.execute("SELECT id FROM assets WHERE current_tag_serial=? AND status='active'",(tag,)).fetchone()
+            if existing: return jsonify(error="tag already bound to an asset"),409
+        cur=c.execute("""INSERT INTO assets(site_id,type_code,location_in_site,rating,manufacturer_serial,current_tag_serial)
+            VALUES(1,?,?,?,?,?)""",(d["type_code"],d["location_in_site"],d.get("rating",""),d.get("manufacturer_serial",""),tag))
+        c.commit()
+        return jsonify(id=cur.lastrowid),201
+    except Exception as e:
+        c.rollback(); return jsonify(error=str(e)),500
+    finally:
+        c.close()
+
 @app.get("/api/asset/<int:aid>")
 def asset(aid):
     c=conn(); r=c.execute("""SELECT a.*,t.label type_label,t.recharge_years,t.hydro_years,s.building_name,o.entity_name owner_name
@@ -264,6 +286,28 @@ async function render(){
     <div style="border-top:.5px solid var(--bd);padding-top:8px;display:flex;justify-content:space-between;align-items:center"><div><span class="muted">Asset</span> ${V.aid} · <span class="muted">tag</span> <span class="mono">${r.tag}</span></div><span style="font-size:30px">▦</span></div></div>
     <div style="display:flex;gap:8px;margin-top:12px"><button class="btn" style="text-align:center" onclick="go('scan')">Next unit</button><button class="btn acc" onclick="showReg()">View register</button></div>`;
   }
+  else if(V.s==='notfound'){
+    e.innerHTML=`<button class="back" onclick="go('scan')">← Scan</button>
+    <div style="text-align:center;margin:20px 0"><div style="font-size:38px">❓</div>
+    <p style="font-weight:500;margin:10px 0 3px">Tag not recognized</p>
+    <p class="tiny mono">${V.unknownTag}</p></div>
+    <p class="muted" style="margin-bottom:14px">This tag isn't bound to any asset. Register a new extinguisher and bind it now?</p>
+    <button class="btn acc" style="text-align:center" onclick="go('register')">+ Register new asset</button>
+    <button class="lnk" style="margin-top:10px" onclick="go('find')">🔍 Find existing asset instead</button>`;
+  }
+  else if(V.s==='register'){
+    const {j:types}=await A('/api/types');
+    e.innerHTML=`<button class="back" onclick="go('notfound')">← Back</button><p style="font-weight:500;margin:0 0 3px">Register new asset</p>
+    <p class="tiny" style="margin:0 0 12px">Binding tag <span class="mono">${V.unknownTag}</span></p>
+    <label class="muted">Extinguisher type</label>
+    <select id="rtype" style="width:100%;padding:10px 12px;border:.5px solid var(--bd2);border-radius:8px;font-size:15px;margin:6px 0 14px;background:var(--card);color:var(--tx)">
+      ${types.map(t=>`<option value="${t.code}">${t.label}</option>`).join('')}
+    </select>
+    <label class="muted">Location in site</label><input id="rloc" placeholder="e.g. Level 3 lift lobby">
+    <label class="muted">Rating</label><input id="rrating" placeholder="e.g. 21A/144B">
+    <label class="muted">Manufacturer serial</label><input id="rmfr" placeholder="e.g. MFR-77120">
+    <button class="btn acc" style="text-align:center" onclick="submitRegister()">Register & bind tag</button>`;
+  }
   else if(V.s==='reg'){
     const {j}=await A('/api/register');
     e.innerHTML=`<button class="back" onclick="go('scan')">← Back</button><p style="font-weight:500;margin:0 0 3px">§10.3.3.1 register</p>
@@ -275,7 +319,14 @@ async function render(){
   }
 }
 window.go=s=>{stopCam();V.s=s;render()};
-window.scan=async s=>{stopCam();const {ok,j}=await A('/api/asset/by-tag/'+s);if(!ok){alert('Retired or unknown tag — use Find by location');go('scan');return;}V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();};
+window.scan=async s=>{stopCam();const {ok,j}=await A('/api/asset/by-tag/'+s);if(!ok){V.unknownTag=s;V.s='notfound';render();return;}V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();};
+window.submitRegister=async()=>{
+  const body={type_code:document.getElementById('rtype').value,location_in_site:document.getElementById('rloc').value||'—',
+    rating:document.getElementById('rrating').value,manufacturer_serial:document.getElementById('rmfr').value,tag_serial:V.unknownTag};
+  const {ok,status,j}=await A('/api/asset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!ok){alert('Error '+status+': '+(j.error||''));return;}
+  openAsset(j.id);
+};
 window.openAsset=async id=>{const {j}=await A('/api/asset/'+id);V.asset=j;V.aid=id;const h=await A('/api/asset/'+id+'/history');V.hist=h.j;V.s='asset';render();};
 window.rfind=async()=>{const q=document.getElementById('q').value;const {j}=await A('/api/asset/search?q='+encodeURIComponent(q));
   document.getElementById('res').innerHTML=j.length?j.map(a=>`<button class="btn" onclick="openAsset(${a.id})">Asset ${a.id} · ${a.location_in_site}<br><span class="tiny">${a.type_label} · ${a.building_name}</span></button>`).join(''):'<p class="tiny">No match.</p>';};
