@@ -52,7 +52,7 @@ def init():
     c.close()
 
 # ---------------- API ----------------
-@app.get("/api/asset/by-tag/<s>")
+@app.get("/api/asset/by-tag/<path:s>")
 def by_tag(s):
     c=conn(); r=c.execute("""SELECT a.*,t.label type_label,t.recharge_years,t.hydro_years,s.building_name,o.entity_name owner_name
         FROM assets a JOIN sites s ON s.id=a.site_id JOIN owners o ON o.id=s.owner_id JOIN extinguisher_types t ON t.code=a.type_code
@@ -198,7 +198,12 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;p
 <div class="sc" id="sc"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
-const A=(p,o)=>fetch(p,o).then(r=>r.json().then(j=>({ok:r.ok,status:r.status,j})));
+const A=(p,o)=>{
+  const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),10000);
+  return fetch(p,{...(o||{}),signal:ctrl.signal}).then(r=>r.json().then(j=>({ok:r.ok,status:r.status,j})))
+    .catch(err=>({ok:false,status:0,j:{error:err.name==='AbortError'?'Request timed out':(err.message||'Network error')}}))
+    .finally(()=>clearTimeout(t));
+};
 let V={s:'scan',aid:null,pend:null,asset:null,hist:[]};
 let CAM={stream:null,raf:null};
 function stopCam(){if(CAM.raf)cancelAnimationFrame(CAM.raf);if(CAM.stream)CAM.stream.getTracks().forEach(t=>t.stop());CAM.stream=null;CAM.raf=null;}
@@ -329,7 +334,8 @@ window.scan=async s=>{
   stopCam();
   const box=document.getElementById('viewfinder');
   if(box)box.outerHTML='<div class="scan idle" id="viewfinder"><div style="font-size:32px">⏳</div><span class="hint" style="font-size:12px">Looking up tag…</span></div>';
-  const {ok,j}=await A('/api/asset/by-tag/'+s);
+  const {ok,status,j}=await A('/api/asset/by-tag/'+encodeURIComponent(s));
+  if(!ok&&status===0){alert('Lookup failed: '+(j.error||'network error')+'. Try again.');go('scan');return;}
   if(!ok){V.unknownTag=s;V.s='notfound';render();return;}
   V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();
 };
