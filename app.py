@@ -215,17 +215,17 @@ async function startCam(){
     box.classList.remove('idle');
     box.innerHTML='<video id="camv" autoplay playsinline muted></video><span class="hint" style="font-size:12px">Point at tag QR code</span>';
     const video=document.getElementById('camv');video.srcObject=stream;await video.play();
-    const SCAN_W=360;let scanH=0,sized=false;
+    let sized=false;
     const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d',{willReadFrequently:true});
     let lastTick=0;
     const tick=now=>{
       if(!CAM.stream)return;
       if(video.readyState===video.HAVE_ENOUGH_DATA){
-        if(!sized&&video.videoWidth){scanH=Math.round(SCAN_W*video.videoHeight/video.videoWidth);canvas.width=SCAN_W;canvas.height=scanH;sized=true;}
+        if(!sized&&video.videoWidth){canvas.width=video.videoWidth;canvas.height=video.videoHeight;sized=true;}
         if(sized&&(!lastTick||now-lastTick>150)){
           lastTick=now;
-          ctx.drawImage(video,0,0,SCAN_W,scanH);
-          const img=ctx.getImageData(0,0,SCAN_W,scanH);
+          ctx.drawImage(video,0,0,canvas.width,canvas.height);
+          const img=ctx.getImageData(0,0,canvas.width,canvas.height);
           const code=window.jsQR&&jsQR(img.data,img.width,img.height);
           if(code&&code.data){const val=code.data.trim();stopCam();scan(val);return;}
         }
