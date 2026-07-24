@@ -210,14 +210,20 @@ async function startCam(){
     box.classList.remove('idle');
     box.innerHTML='<video id="camv" autoplay playsinline muted></video><span class="hint" style="font-size:12px">Point at tag QR code</span>';
     const video=document.getElementById('camv');video.srcObject=stream;await video.play();
+    const SCAN_W=360;let scanH=0,sized=false;
     const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d',{willReadFrequently:true});
-    const tick=()=>{
+    let lastTick=0;
+    const tick=now=>{
+      if(!CAM.stream)return;
       if(video.readyState===video.HAVE_ENOUGH_DATA){
-        canvas.width=video.videoWidth;canvas.height=video.videoHeight;
-        ctx.drawImage(video,0,0,canvas.width,canvas.height);
-        const img=ctx.getImageData(0,0,canvas.width,canvas.height);
-        const code=window.jsQR&&jsQR(img.data,img.width,img.height);
-        if(code&&code.data){stopCam();scan(code.data.trim());return;}
+        if(!sized&&video.videoWidth){scanH=Math.round(SCAN_W*video.videoHeight/video.videoWidth);canvas.width=SCAN_W;canvas.height=scanH;sized=true;}
+        if(sized&&(!lastTick||now-lastTick>150)){
+          lastTick=now;
+          ctx.drawImage(video,0,0,SCAN_W,scanH);
+          const img=ctx.getImageData(0,0,SCAN_W,scanH);
+          const code=window.jsQR&&jsQR(img.data,img.width,img.height);
+          if(code&&code.data){const val=code.data.trim();stopCam();scan(val);return;}
+        }
       }
       CAM.raf=requestAnimationFrame(tick);
     };
@@ -319,7 +325,14 @@ async function render(){
   }
 }
 window.go=s=>{stopCam();V.s=s;render()};
-window.scan=async s=>{stopCam();const {ok,j}=await A('/api/asset/by-tag/'+s);if(!ok){V.unknownTag=s;V.s='notfound';render();return;}V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();};
+window.scan=async s=>{
+  stopCam();
+  const box=document.getElementById('viewfinder');
+  if(box)box.outerHTML='<div class="scan idle" id="viewfinder"><div style="font-size:32px">⏳</div><span class="hint" style="font-size:12px">Looking up tag…</span></div>';
+  const {ok,j}=await A('/api/asset/by-tag/'+s);
+  if(!ok){V.unknownTag=s;V.s='notfound';render();return;}
+  V.asset=j;V.aid=j.id;const h=await A('/api/asset/'+j.id+'/history');V.hist=h.j;V.s='asset';render();
+};
 window.submitRegister=async()=>{
   const body={type_code:document.getElementById('rtype').value,location_in_site:document.getElementById('rloc').value||'—',
     rating:document.getElementById('rrating').value,manufacturer_serial:document.getElementById('rmfr').value,tag_serial:V.unknownTag};
